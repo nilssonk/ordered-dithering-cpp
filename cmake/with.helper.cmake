@@ -1,0 +1,8 @@
+function(WithMsg FEATURE ENABLED)
+    if(ENABLED)
+        set(MODE WITH)
+    else()
+        set(MODE WITHOUT)
+    endif()
+    message(STATUS "Building ${PROJECT_NAME} ${MODE} ${FEATURE}")
+endfunction()
