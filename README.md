@@ -1,2 +1,2 @@
 # ordered-dithering-cpp
-A C++17 implementation of Bayes dithering.
+A tool for performing Bayer dithering, written in C++17.

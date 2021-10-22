@@ -10,7 +10,7 @@ namespace {
 
 using Image = vips::VImage;
 
-using BayesKernel = std::array<uint8_t, 64>;
+using BayerKernel = std::array<uint8_t, 64>;
 
 template<typename T>
 [[nodiscard]] constexpr auto
@@ -39,18 +39,18 @@ modulo_mask_pow2(int power)
 
 template<int SIZE>
 [[nodiscard]] constexpr auto
-make_bayes_kernel()
+make_bayer_kernel()
 {
-    constexpr std::array<BayesKernel, 3> bayes_kernels = {
-        BayesKernel{0, 2, 3, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    constexpr std::array<BayerKernel, 3> bayer_kernels = {
+        BayerKernel{0, 2, 3, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-        BayesKernel{0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5,
+        BayerKernel{0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5,
                     0, 0, 0, 0,  0,  0, 0,  0, 0, 0,  0, 0, 0,  0, 0,  0,
                     0, 0, 0, 0,  0,  0, 0,  0, 0, 0,  0, 0, 0,  0, 0,  0,
                     0, 0, 0, 0,  0,  0, 0,  0, 0, 0,  0, 0, 0,  0, 0,  0},
-        BayesKernel{0,  32, 8,  40, 2,  34, 10, 42, 48, 16, 56, 24, 50,
+        BayerKernel{0,  32, 8,  40, 2,  34, 10, 42, 48, 16, 56, 24, 50,
                     18, 58, 26, 12, 44, 4,  36, 14, 46, 6,  38, 60, 28,
                     52, 20, 62, 30, 54, 22, 3,  35, 11, 43, 1,  33, 9,
                     41, 51, 19, 59, 27, 49, 17, 57, 25, 15, 47, 7,  39,
@@ -58,7 +58,7 @@ make_bayes_kernel()
 
     constexpr auto log2_size = simple_log2(SIZE);
     constexpr auto index = log2_size - 1;
-    BayesKernel    kernel = bayes_kernels[index];
+    BayerKernel    kernel = bayer_kernels[index];
 
     constexpr auto max = std::numeric_limits<uint8_t>::max();
     for (int i = 0; i < SIZE * SIZE; ++i) {
@@ -119,19 +119,19 @@ dither(Image & image, int kernel_size)
         return (3 * p[0] + p[2] + 4 * p[1]) / 8;
     };
 
-    // Select Bayes kernel
+    // Select Bayer kernel
     auto const kernel = std::invoke([kernel_size]() {
         switch (kernel_size) {
-            case 2: return make_bayes_kernel<2>();
-            case 4: return make_bayes_kernel<4>();
-            case 8: return make_bayes_kernel<8>();
+            case 2: return make_bayer_kernel<2>();
+            case 4: return make_bayer_kernel<4>();
+            case 8: return make_bayer_kernel<8>();
             default: throw std::runtime_error("Invalid kernel size");
         }
     });
     auto const kernel_mod_mask =
         modulo_mask_pow2<decltype(width)>(simple_log2(kernel_size));
 
-    auto bayes_function =
+    auto bayer_function =
         [&kernel, kernel_size, kernel_mod_mask](
             PixelCoord coord, Format luminance, Format * out_p) {
             auto const x = coord.x & kernel_mod_mask;
@@ -149,7 +149,7 @@ dither(Image & image, int kernel_size)
     // Compose pipeline
     auto pipeline = [&](PixelCoord coord, auto * pixel) {
         auto const lum = to_luminance(pixel);
-        bayes_function(coord, lum, pixel);
+        bayer_function(coord, lum, pixel);
     };
 
     // Run pipeline
