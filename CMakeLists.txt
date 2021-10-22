@@ -8,13 +8,10 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-
 include(lto.helper)
 include(test.helper)
 include(with.helper)
 include(tidy.helper)
-
-#find_package(Threads REQUIRED)
 
 option(ORDERED_DITHERING_CLANG_TIDY "Build with clang-tidy" ON)
 option(ORDERED_DITHERING_TESTS "Build and add tests" ON)
@@ -47,13 +44,6 @@ endif()
 set(ORDERED_DITHERING_EXTRA_CFLAGS -O3 -ffast-math -fvisibility=hidden)
 
 set_property(GLOBAL PROPERTY ORDERED_DITHERING_RELEASE_EXTRA_CFLAGS ${ORDERED_DITHERING_EXTRA_CFLAGS})
-
-add_library(ordered_dithering_copts_magick INTERFACE)
-target_compile_options(ordered_dithering_copts_magick INTERFACE
-    -fopenmp)
-target_compile_definitions(ordered_dithering_copts_magick INTERFACE
-    -DMAGICKCORE_QUANTUM_DEPTH=16
-    -DMAGICKCORE_HDRI_ENABLE=0)
 
 add_library(ordered_dithering_copts_common INTERFACE)
 target_compile_options(ordered_dithering_copts_common INTERFACE
