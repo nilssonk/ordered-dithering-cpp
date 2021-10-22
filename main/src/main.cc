@@ -1,21 +1,21 @@
 #include "SG14/inplace_function.h"
 #include "fmt/core.h"
 
-#include <Magick++.h>
 #include <cassert>
 #include <filesystem>
 #include <limits>
+#include <type_traits>
 #include <unordered_map>
-#include <variant>
+#include <vips/vips8>
 
 namespace {
 
-using Magick::Quantum;
+using Image = vips::VImage;
 
 // B&W dithering needs the corresponding value for white
-constexpr auto G_QUANTUM_WHITE_VALUE = std::numeric_limits<Quantum>::max();
+constexpr auto G_WHITE_VALUE = std::numeric_limits<uint8_t>::max();
 
-using BayesKernel = std::array<Quantum, 64>;
+using BayesKernel = std::array<uint8_t, 64>;
 
 template<typename T>
 [[nodiscard]] constexpr auto
@@ -30,11 +30,11 @@ simple_log2(T x) -> int
     return -1;
 }
 
-template<typename T, typename = std::enable_if_t<std::is_unsigned_v<T>>>
+template<typename T, typename U = std::remove_cv_t<T>>
 [[nodiscard]] constexpr auto
 modulo_mask_pow2(int power)
 {
-    T result = 0;
+    U result = 0;
     for (int i = 0; i < power; ++i) {
         result |= (1 << i);
     }
@@ -64,6 +64,8 @@ make_bayes_kernel()
     constexpr auto log2_size = simple_log2(SIZE);
     constexpr auto index = log2_size - 1;
     BayesKernel    kernel = bayes_kernels[index];
+
+    constexpr auto max = std::numeric_limits<uint8_t>::max();
     for (int i = 0; i < SIZE * SIZE; ++i) {
         // Table values are scaled by the table size, i.e. by
         // the square of the table width, and need to be normalized
@@ -71,57 +73,55 @@ make_bayes_kernel()
         // possible to optimize dividing by their squares into shifting
         // right by twice their log_2 value.
         uint_fast32_t x = kernel[i];
-        kernel[i] = static_cast<Quantum>((x * G_QUANTUM_WHITE_VALUE) >>
-                                         (log2_size * 2));
+        kernel[i] = static_cast<uint8_t>((x * max) >> (log2_size * 2));
     }
 
     return kernel;
 }
 
+struct EnhancementParams {
+    int   brightness;
+    float contrast;
+};
+
 void
-enhance(Magick::Image & image, float brightness, float contrast)
+enhance(Image & image, EnhancementParams const & p)
 {
-    image.brightnessContrast(brightness, contrast);
+    image += p.brightness;
+    image = image * p.contrast + 255.0 * (1.0 - p.contrast);
 
     constexpr float sharp_gauss_radius = 1.0F;
     constexpr float sharp_laplacian_dev = 1.0F;
-    image.sharpen(sharp_gauss_radius, sharp_laplacian_dev);
+    image.sharpen(Image::option()
+                      ->set("radius", sharp_gauss_radius)
+                      ->set("sigma", sharp_laplacian_dev));
 }
 
+template<typename Format>
 void
-dither(Magick::Image & image, int kernel_size)
+dither(Image & image, int kernel_size)
 {
     struct PixelCoord {
-        std::size_t x;
-        std::size_t y;
+        int x;
+        int y;
     };
 
     // Get image dimensions
-    auto const width = image.columns();
-    auto const height = image.rows();
-    auto const n_channels = image.channels();
+    auto const width = image.width();
+    auto const height = image.height();
 
-    fmt::print("Image dimensions: {}x{}@{}bpp\n",
-               width,
-               height,
-               n_channels * std::numeric_limits<Quantum>::digits);
-
-    // Prepare image for writing
-    image.modifyImage();
-    auto * const data = image.getPixels(0, 0, width, height);
+    vips_image_inplace(image.get_image());
+    VipsRegion * region = vips_region_new(image.get_image());
+    VipsRect     full_image{0, 0, width, height};
+    if (vips_region_prepare(region, &full_image) < 0) {
+        throw std::runtime_error("Unable to prepare vips region");
+    }
 
     // Pipeline step 1
-    auto to_luminance = [](Quantum const * channels) -> Quantum {
-        // Assume RGB(A)
-        auto const red = channels[0];
-        auto const green = channels[1];
-        auto const blue = channels[2];
-
-        // Assume saturated alpha, and approximate luminance as
+    auto to_luminance = [](Format const * p) -> Format {
+        // Assume RGB with saturated alpha, and approximate luminance as
         // 0.375*R + 0.5*G + 0.125*B
-        Quantum lum = (3 * red + blue + 4 * green) >> 3;
-
-        return lum;
+        return (3 * p[0] + p[2] + 4 * p[1]) / 8;
     };
 
     // Select Bayes kernel
@@ -134,48 +134,41 @@ dither(Magick::Image & image, int kernel_size)
         }
     });
     auto const kernel_mod_mask =
-        modulo_mask_pow2<std::size_t>(simple_log2(kernel_size));
+        modulo_mask_pow2<decltype(width)>(simple_log2(kernel_size));
 
-    auto bayes_function = [&kernel, kernel_size, kernel_mod_mask](
-                              PixelCoord coord,
-                              Quantum *  pixels,
-                              Quantum    luminance) {
-        auto const x = coord.x & kernel_mod_mask;
-        auto const y = coord.y & kernel_mod_mask;
+    auto bayes_function =
+        [&kernel, kernel_size, kernel_mod_mask](
+            PixelCoord coord, Format luminance, Format * out_p) {
+            auto const x = coord.x & kernel_mod_mask;
+            auto const y = coord.y & kernel_mod_mask;
 
-        pixels[0] = static_cast<int>(luminance > kernel[y * kernel_size + x]) *
-                    G_QUANTUM_WHITE_VALUE;
-    };
+            // Only write to a single channel
+            auto const mask_value = kernel[y * kernel_size + x];
+            auto const result = (luminance > mask_value)
+                                    ? std::numeric_limits<Format>::max()
+                                    : static_cast<Format>(0);
 
-    if (n_channels > 1) {
-        // Compose pipeline
-        auto pipeline = [&](PixelCoord coord, Quantum * pixels) {
-            auto const lum = to_luminance(pixels);
-            bayes_function(coord, pixels, lum);
+            out_p[0] = result;
         };
 
-        // Run pipeline
-        for (std::size_t y = 0; y < height; ++y) {
-            for (std::size_t x = 0; x < width; ++x) {
-                std::size_t const index = n_channels * (y * width + x);
-                pipeline(PixelCoord{x, y}, &data[index]);
-            }
-        }
-    } else {
-        for (std::size_t y = 0; y < height; ++y) {
-            for (std::size_t x = 0; x < width; ++x) {
-                std::size_t const index = n_channels * (y * width + x);
-                bayes_function(PixelCoord{x, y}, &data[index], data[index]);
-            }
+    // Compose pipeline
+    auto pipeline = [&](PixelCoord coord, auto * pixel) {
+        auto const lum = to_luminance(pixel);
+        bayes_function(coord, lum, pixel);
+    };
+
+    // Run pipeline
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            // Casting from Format* to VipsPel* to void* to Format* is probably UB
+            void * data = VIPS_REGION_ADDR(region, x, y);
+            pipeline(PixelCoord{x, y}, static_cast<Format *>(data));
         }
     }
-
-    // Collect data
-    image.syncPixels();
 }
 
 void
-write_output(std::filesystem::path const & out_file, Magick::Image & image)
+write_output(Image & image, std::filesystem::path const & out_file)
 {
     std::string const extension = out_file.extension();
     auto const        without_dot = std::string_view{extension}.substr(1);
@@ -183,12 +176,15 @@ write_output(std::filesystem::path const & out_file, Magick::Image & image)
     fmt::print("Saving as [{}] at {}\n", without_dot, out_file.string());
 
     // Extract relevant channel
-    image.channel(MagickCore::ChannelType::RedChannel);
+    image = image[0];
 
-    // Remove any incompatible color profiles
-    image.strip();
-
-    image.write(out_file.string());
+    if (without_dot == "png" || without_dot == "PNG") {
+        image.pngsave(
+            out_file.c_str(),
+            Image::option()->set("bitdepth", 1)->set("compression", 9));
+    } else {
+        image.write_to_file(out_file.c_str());
+    }
 }
 
 } // namespace
@@ -200,32 +196,65 @@ main(int argc, char ** argv) -> int
         fmt::print(stderr,
                    "Usage: {} "
                    "<input_image> <output_image> <kernel_size (i)> "
-                   "<brightness (f)> <contrast (f)>\n",
+                   "<brightness (i)> <contrast (f)>\n",
                    argv[0]);
         return -1;
     }
 
     try {
-        // Parse parameters
+        // Parse arguments
         std::filesystem::path in_file{argv[1]};
         std::filesystem::path out_file{argv[2]};
 
         auto const kernel_size =
             static_cast<int>(std::strtol(argv[3], nullptr, 10));
-        float const brightness = std::strtof(argv[4], nullptr);
-        float const contrast = std::strtof(argv[5], nullptr);
+        auto const brightness =
+            static_cast<int>(std::strtol(argv[4], nullptr, 10));
+        auto const contrast = std::strtof(argv[5], nullptr);
 
-        Magick::InitializeMagick(argv[0]);
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg)
+        if (VIPS_INIT(argv[0]) < 0) {
+            fmt::print(stderr, "Unable to initialize libvips\n");
+            return -1;
+        }
 
         // Load image
-        Magick::Image image{in_file.c_str()};
+        auto image = Image::new_from_file(in_file.c_str());
+        image.colourspace(VipsInterpretation::VIPS_INTERPRETATION_sRGB);
 
         // Process image
-        enhance(image, brightness, contrast);
-        dither(image, kernel_size);
+        enhance(image, {brightness, contrast});
+
+        auto error_func = [] {
+            throw std::runtime_error("Unsupported image format");
+        };
+
+        auto const format = image.format();
+        switch (format) {
+            case VIPS_FORMAT_NOTSET: error_func(); break;
+            case VIPS_FORMAT_UCHAR:
+                dither<unsigned char>(image, kernel_size);
+                break;
+            case VIPS_FORMAT_CHAR: error_func(); break;
+            case VIPS_FORMAT_USHORT:
+                // NOLINTNEXTLINE(google-runtime-int)
+                dither<unsigned short>(image, kernel_size);
+                break;
+            case VIPS_FORMAT_SHORT:
+                // NOLINTNEXTLINE(google-runtime-int)
+                dither<short>(image, kernel_size);
+                break;
+            case VIPS_FORMAT_UINT: dither<unsigned>(image, kernel_size); break;
+            case VIPS_FORMAT_INT: dither<int>(image, kernel_size); break;
+            case VIPS_FORMAT_FLOAT: dither<float>(image, kernel_size); break;
+            case VIPS_FORMAT_COMPLEX: error_func(); break;
+            case VIPS_FORMAT_DOUBLE: dither<double>(image, kernel_size); break;
+            case VIPS_FORMAT_DPCOMPLEX:
+            case VIPS_FORMAT_LAST: error_func(); break;
+        }
 
         // Done
-        write_output(out_file, image);
+        write_output(image, out_file);
 
         return 0;
     } catch (std::exception const & e) {
