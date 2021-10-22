@@ -8,8 +8,7 @@ target_sources(ordered_dithering_main PRIVATE ${INC} ${SRC})
 target_link_libraries(ordered_dithering_main PRIVATE
     ordered_dithering_copts_common
     vips
-    fmt
-    sg14)
+    fmt)
 
 configure_lto(ordered_dithering_main)
 configure_tidy(ordered_dithering_main)
