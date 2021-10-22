@@ -1,19 +1,14 @@
-#include "SG14/inplace_function.h"
 #include "fmt/core.h"
 
-#include <cassert>
 #include <filesystem>
+#include <functional>
 #include <limits>
 #include <type_traits>
-#include <unordered_map>
 #include <vips/vips8>
 
 namespace {
 
 using Image = vips::VImage;
-
-// B&W dithering needs the corresponding value for white
-constexpr auto G_WHITE_VALUE = std::numeric_limits<uint8_t>::max();
 
 using BayesKernel = std::array<uint8_t, 64>;
 
@@ -142,12 +137,12 @@ dither(Image & image, int kernel_size)
             auto const x = coord.x & kernel_mod_mask;
             auto const y = coord.y & kernel_mod_mask;
 
-            // Only write to a single channel
             auto const mask_value = kernel[y * kernel_size + x];
             auto const result = (luminance > mask_value)
                                     ? std::numeric_limits<Format>::max()
                                     : static_cast<Format>(0);
 
+            // Only write to a single channel
             out_p[0] = result;
         };
 
