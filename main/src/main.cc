@@ -200,15 +200,13 @@ write_output(Image & image, std::filesystem::path const & out_file)
     std::string const extension = out_file.extension();
     auto const        without_dot = std::string_view{extension}.substr(1);
 
-    fmt::print("Saving as [{}] at {}\n", without_dot, out_file.string());
+    fmt::print("Saving as [{}] at \"{}\"\n", without_dot, out_file.string());
 
     // Extract relevant channel
     image = image[0];
 
     if (without_dot == "png" || without_dot == "PNG") {
-        image.pngsave(
-            out_file.c_str(),
-            Image::option()->set("bitdepth", 1)->set("compression", 9));
+        image.pngsave(out_file.c_str(), Image::option()->set("bitdepth", 1));
     } else {
         image.write_to_file(out_file.c_str());
     }
