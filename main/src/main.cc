@@ -1,4 +1,5 @@
 #include "fmt/core.h"
+#include "timing.hh"
 
 #include <filesystem>
 #include <functional>
@@ -163,6 +164,37 @@ dither(Image & image, int kernel_size)
 }
 
 void
+dither_dispatch(Image & image, int kernel_size)
+{
+    auto error_func = [] {
+        throw std::runtime_error("Unsupported image format");
+    };
+
+    switch (image.format()) {
+        case VIPS_FORMAT_NOTSET: error_func(); break;
+        case VIPS_FORMAT_UCHAR:
+            dither<unsigned char>(image, kernel_size);
+            break;
+        case VIPS_FORMAT_CHAR: error_func(); break;
+        case VIPS_FORMAT_USHORT:
+            // NOLINTNEXTLINE(google-runtime-int)
+            dither<unsigned short>(image, kernel_size);
+            break;
+        case VIPS_FORMAT_SHORT:
+            // NOLINTNEXTLINE(google-runtime-int)
+            dither<short>(image, kernel_size);
+            break;
+        case VIPS_FORMAT_UINT: dither<unsigned>(image, kernel_size); break;
+        case VIPS_FORMAT_INT: dither<int>(image, kernel_size); break;
+        case VIPS_FORMAT_FLOAT: dither<float>(image, kernel_size); break;
+        case VIPS_FORMAT_COMPLEX: error_func(); break;
+        case VIPS_FORMAT_DOUBLE: dither<double>(image, kernel_size); break;
+        case VIPS_FORMAT_DPCOMPLEX:
+        case VIPS_FORMAT_LAST: error_func(); break;
+    }
+}
+
+void
 write_output(Image & image, std::filesystem::path const & out_file)
 {
     std::string const extension = out_file.extension();
@@ -220,36 +252,14 @@ main(int argc, char ** argv) -> int
         // Process image
         enhance(image, {brightness, contrast});
 
-        auto error_func = [] {
-            throw std::runtime_error("Unsupported image format");
-        };
+        // Perform dithering
+        timed_exec("Dither", [&image, kernel_size]() {
+            dither_dispatch(image, kernel_size);
+        });
 
-        auto const format = image.format();
-        switch (format) {
-            case VIPS_FORMAT_NOTSET: error_func(); break;
-            case VIPS_FORMAT_UCHAR:
-                dither<unsigned char>(image, kernel_size);
-                break;
-            case VIPS_FORMAT_CHAR: error_func(); break;
-            case VIPS_FORMAT_USHORT:
-                // NOLINTNEXTLINE(google-runtime-int)
-                dither<unsigned short>(image, kernel_size);
-                break;
-            case VIPS_FORMAT_SHORT:
-                // NOLINTNEXTLINE(google-runtime-int)
-                dither<short>(image, kernel_size);
-                break;
-            case VIPS_FORMAT_UINT: dither<unsigned>(image, kernel_size); break;
-            case VIPS_FORMAT_INT: dither<int>(image, kernel_size); break;
-            case VIPS_FORMAT_FLOAT: dither<float>(image, kernel_size); break;
-            case VIPS_FORMAT_COMPLEX: error_func(); break;
-            case VIPS_FORMAT_DOUBLE: dither<double>(image, kernel_size); break;
-            case VIPS_FORMAT_DPCOMPLEX:
-            case VIPS_FORMAT_LAST: error_func(); break;
-        }
-
-        // Done
-        write_output(image, out_file);
+        // Write new image
+        timed_exec("Image write",
+                   [&image, &out_file]() { write_output(image, out_file); });
 
         return 0;
     } catch (std::exception const & e) {
