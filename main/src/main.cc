@@ -237,6 +237,7 @@ main(int argc, char ** argv) -> int
             static_cast<int>(std::strtol(argv[4], nullptr, 10));
         auto const contrast = std::strtof(argv[5], nullptr);
 
+        // Initialize libvips
         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg)
         if (VIPS_INIT(argv[0]) < 0) {
             fmt::print(stderr, "Unable to initialize libvips\n");
@@ -245,9 +246,12 @@ main(int argc, char ** argv) -> int
 
         // Load image
         auto image = Image::new_from_file(in_file.c_str());
+
+        // Reinterpret color space
+        // @TODO: Is this correct?
         image.colourspace(VipsInterpretation::VIPS_INTERPRETATION_sRGB);
 
-        // Process image
+        // Pre-process image
         enhance(image, {brightness, contrast});
 
         // Perform dithering
@@ -261,6 +265,7 @@ main(int argc, char ** argv) -> int
 
         return 0;
     } catch (std::exception const & e) {
+        // @TODO: Don't use potentially unsafe functions in exception handler
         fmt::print(stderr, "{}\n", e.what());
 
         return -1;
