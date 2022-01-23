@@ -1,0 +1,11 @@
+name: Clang Build and Lint
+on: [push]
+jobs:
+  Clang-Build-Lint:
+    runs-on: [self-hosted]
+    steps:
+      - uses: actions/checkout@v2
+      - name: Build and Lint
+        run: |
+          cmake --preset=clang-debug .
+          cmake --build --preset=clang-debug
