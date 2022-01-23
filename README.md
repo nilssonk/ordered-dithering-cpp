@@ -2,6 +2,9 @@
 
 A tool for performing black and white Bayer dithering, written in C++17.
 
+![Clang Build and Lint](https://github.com/nilssonk/vulkan-cpp/actions/workflows/clang-build.yml/badge.svg)
+![GCC Build](https://github.com/nilssonk/vulkan-cpp/actions/workflows/gcc-build.yml/badge.svg)
+
 ## Usage
 
 ```
