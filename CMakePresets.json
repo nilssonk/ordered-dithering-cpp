@@ -1,0 +1,135 @@
+{
+    "version": 3,
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 21,
+        "patch": 0
+    },
+    "configurePresets": [
+        {
+            "hidden": true,
+            "name": "global",
+            "binaryDir": "${sourceDir}/build",
+            "generator": "Ninja"
+        },
+        {
+            "hidden": true,
+            "name": "gcc",
+            "toolchainFile": "${sourceDir}/cmake/toolchain/gcc.cmake"
+        },
+        {
+            "hidden": true,
+            "name": "clang",
+            "toolchainFile": "${sourceDir}/cmake/toolchain/clang.cmake"
+        },
+        {
+            "hidden": true,
+            "name": "debug",
+            "displayName": "Debug",
+            "description": "Debug build using Ninja generator",
+            "inherits": ["global"],
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "ORDERED_DITHERING_CLANG_TIDY": "ON"
+            }
+        },
+        {
+            "hidden": true,
+            "inherits": ["debug"],
+            "name": "debug-no-clang-tidy",
+            "displayName": "Debug without clang-tidy",
+            "description": "Default build using Ninja generator but without clang-tidy",
+            "cacheVariables": {
+                "ORDERED_DITHERING_CLANG_TIDY": "OFF"
+            }
+        },
+        {
+            "hidden": true,
+            "name": "release",
+            "displayName": "Release",
+            "description": "Release build using Ninja generator",
+            "inherits": ["global"],
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "ORDERED_DITHERING_CLANG_TIDY": "OFF",
+                "ORDERED_DITHERING_LTO": "OFF"
+            }
+        },
+        {
+            "hidden": true,
+            "inherits": ["release"],
+            "name": "release-lto",
+            "displayName": "Release with LTO",
+            "description": "Release build using Ninja generator and LTO",
+            "cacheVariables": {
+                "ORDERED_DITHERING_LTO": "ON"
+            }
+        },
+        {
+            "inherits": ["clang", "debug"],
+            "name": "clang-debug"
+        },
+        {
+            "inherits": ["clang", "debug-no-clang-tidy"],
+            "name": "clang-debug-no-clang-tidy"
+        },
+        {
+            "inherits": ["clang", "release"],
+            "name": "clang-release"
+        },
+        {
+            "inherits": ["clang", "release-lto"],
+            "name": "clang-release-lto"
+        },
+        {
+            "inherits": ["gcc", "debug"],
+            "name": "gcc-debug"
+        },
+        {
+            "inherits": ["gcc", "debug-no-clang-tidy"],
+            "name": "gcc-debug-no-clang-tidy"
+        },
+        {
+            "inherits": ["gcc", "release"],
+            "name": "gcc-release"
+        },
+        {
+            "inherits": ["gcc", "release-lto"],
+            "name": "gcc-release-lto"
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "clang-debug",
+            "configurePreset": "clang-debug"
+        },
+        {
+            "name": "clang-debug-no-clang-tidy",
+            "configurePreset": "clang-debug-no-clang-tidy"
+        },
+        {
+            "name": "clang-release",
+            "configurePreset": "clang-release"
+        },
+        {
+            "name": "clang-release-lto",
+            "configurePreset": "clang-release-lto"
+        },
+        {
+            "name": "gcc-debug",
+            "configurePreset": "gcc-debug"
+        },
+        {
+            "name": "gcc-debug-no-clang-tidy",
+            "configurePreset": "gcc-debug-no-clang-tidy"
+        },
+        {
+            "name": "gcc-release",
+            "configurePreset": "gcc-release"
+        },
+        {
+            "name": "gcc-release-lto",
+            "configurePreset": "gcc-release-lto"
+        }
+    ]
+}
