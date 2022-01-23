@@ -1,0 +1,11 @@
+name: GCC Build
+on: [push]
+jobs:
+  GCC-Build:
+    runs-on: [self-hosted]
+    steps:
+      - uses: actions/checkout@v2
+      - name: Build
+        run: |
+          cmake --preset=gcc-debug-no-clang-tidy .
+          cmake --build --preset=gcc-debug-no-clang-tidy
