@@ -5,6 +5,15 @@ A tool for performing black and white Bayer dithering, written in C++17.
 ![Clang Build and Lint](https://github.com/nilssonk/vulkan-cpp/actions/workflows/clang-build.yml/badge.svg)
 ![GCC Build](https://github.com/nilssonk/vulkan-cpp/actions/workflows/gcc-build.yml/badge.svg)
 
+### 2x2 Bayer Kernel
+![Dither 2x2 Kernel](.github/img/dither2.jpg)
+
+### 4x4 Bayer Kernel
+![Dither 4x4 Kernel](.github/img/dither4.jpg)
+
+### 8x8 Bayer Kernel
+![Dither 8x8 Kernel](.github/img/dither8.jpg)
+
 ## Usage
 
 ```
