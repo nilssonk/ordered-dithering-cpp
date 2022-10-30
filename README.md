@@ -6,12 +6,15 @@ A tool for performing black and white Bayer dithering, written in C++17.
 ![GCC Build](https://github.com/nilssonk/vulkan-cpp/actions/workflows/gcc-build.yml/badge.svg)
 
 ### 2x2 Bayer Kernel
+
 ![Dither 2x2 Kernel](.github/img/dither2.jpg)
 
 ### 4x4 Bayer Kernel
+
 ![Dither 4x4 Kernel](.github/img/dither4.jpg)
 
 ### 8x8 Bayer Kernel
+
 ![Dither 8x8 Kernel](.github/img/dither8.jpg)
 
 ## Usage
@@ -29,6 +32,8 @@ ordered_dithering_main /path/to/some_image.jpg /path/to/output.png 8 30 1.15
 There are a few dependencies required to build this tool:
 
 #### Bundled/Fetched by CMake
+
+-   ASIO (https://think-async.com/Asio)
 
 -   fmt (https://github.com/fmtlib/fmt)
 
