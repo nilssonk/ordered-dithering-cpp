@@ -10,8 +10,9 @@ target_compile_definitions(ordered_dithering_main PRIVATE
 )
 target_link_libraries(ordered_dithering_main PRIVATE
     ordered_dithering_copts_common
-    vips
-    fmt)
+    asio
+    fmt
+    vips)
 
 configure_lto(ordered_dithering_main)
 configure_tidy(ordered_dithering_main)
