@@ -159,36 +159,57 @@ dither(asio::thread_pool & threads, Image & image, int kernel_size)
 
     // Run pipeline with fork/join pattern
     int const whole_x_chunks = width / G_THREAD_CHUNK_SIZE;
-    int const whole_y_chunks = height / G_THREAD_CHUNK_SIZE;
+    int const remainder_x = width % G_THREAD_CHUNK_SIZE;
+    int const remainder_start_x = width - remainder_x;
 
-    // Process whole chunks
+    int const whole_y_chunks = height / G_THREAD_CHUNK_SIZE;
+    int const remainder_y = height % G_THREAD_CHUNK_SIZE;
+    int const remainder_start_y = height - remainder_y;
+
+    auto process_chunk = [&pipeline, region](PixelCoord origin, int w, int h) {
+        for (int y = origin.y; y < (origin.y + h); ++y) {
+            for (int x = origin.x; x < (origin.x + w); ++x) {
+                void * data = VIPS_REGION_ADDR(region, x, y);
+                pipeline(PixelCoord{x, y}, static_cast<Format *>(data));
+            }
+        }
+    };
+
+    // Process chunks
     for (int y = 0; y < whole_y_chunks; ++y) {
+        // Main chunks
+        auto const real_y = y * G_THREAD_CHUNK_SIZE;
         for (int x = 0; x < whole_x_chunks; ++x) {
-            asio::post(threads, [&region, x, y, &pipeline] {
-                for (int i = 0; i < G_THREAD_CHUNK_SIZE; ++i) {
-                    for (int j = 0; j < G_THREAD_CHUNK_SIZE; ++j) {
-                        // Casting from Format* to VipsPel* to void* to Format*
-                        // is probably UB
-                        auto const real_x = x * G_THREAD_CHUNK_SIZE + j;
-                        auto const real_y = y * G_THREAD_CHUNK_SIZE + i;
-                        void * data = VIPS_REGION_ADDR(region, real_x, real_y);
-                        pipeline(PixelCoord{real_x, real_y},
-                                 static_cast<Format *>(data));
-                    }
-                }
+            auto const real_x = x * G_THREAD_CHUNK_SIZE;
+            asio::post(threads, [&process_chunk, real_x, real_y] {
+                process_chunk(
+                    {real_x, real_y}, G_THREAD_CHUNK_SIZE, G_THREAD_CHUNK_SIZE);
             });
         }
+
+        // Remainder column
+        asio::post(threads,
+                   [&process_chunk, remainder_start_x, real_y, remainder_x] {
+                       process_chunk({remainder_start_x, real_y},
+                                     remainder_x,
+                                     G_THREAD_CHUNK_SIZE);
+                   });
     }
 
-    // Process remainder
-    for (int y = whole_y_chunks * G_THREAD_CHUNK_SIZE; y < height; ++y) {
-        for (int x = whole_x_chunks * G_THREAD_CHUNK_SIZE; x < width; ++x) {
-            // Casting from Format* to VipsPel* to void* to Format*
-            // is probably UB
-            void * data = VIPS_REGION_ADDR(region, x, y);
-            pipeline(PixelCoord{x, y}, static_cast<Format *>(data));
-        }
+    // Remainder row
+    for (int x = 0; x < whole_x_chunks; ++x) {
+        auto const real_x = x * G_THREAD_CHUNK_SIZE;
+        asio::post(threads,
+                   [&process_chunk, real_x, remainder_start_y, remainder_y] {
+                       process_chunk({real_x, remainder_start_y},
+                                     G_THREAD_CHUNK_SIZE,
+                                     remainder_y);
+                   });
     }
+
+    // Remaining corner
+    process_chunk(
+        {remainder_start_x, remainder_start_y}, remainder_x, remainder_y);
 
     threads.wait();
 }
@@ -274,7 +295,8 @@ main(int argc, char ** argv) -> int
         // Load image
         auto image = Image::new_from_file(in_file.c_str());
 
-        asio::thread_pool threads{std::thread::hardware_concurrency()};
+        asio::thread_pool threads{
+            std::max(std::thread::hardware_concurrency() - 1, 1U)};
 
         // Reinterpret color space
         // @TODO: Is this correct?

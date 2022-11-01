@@ -28,6 +28,8 @@ Checks:    "bugprone-*,\
 WarningsAsErrors:   '*'
 AnalyzeTemporaryDtors: false
 CheckOptions:
+  - key:             bugprone-easily-swappable-parameters.MinimumLength
+    value:           3
   - key:             performance-move-const-arg.CheckTriviallyCopyableMove
     value:           0
   - key:             readability-identifier-naming.ClassCase
