@@ -1,9 +1,11 @@
+#include "asio.hpp"
 #include "fmt/core.h"
 #include "timing.hh"
 
 #include <filesystem>
 #include <functional>
 #include <limits>
+#include <thread>
 #include <type_traits>
 #include <vips/vips8>
 
@@ -12,6 +14,8 @@ namespace {
 using Image = vips::VImage;
 
 using BayerKernel = std::array<uint8_t, 64>;
+
+constexpr int G_THREAD_CHUNK_SIZE{128};
 
 template<typename T>
 [[nodiscard]] constexpr auto
@@ -95,7 +99,7 @@ enhance(Image & image, EnhancementParams const & p)
 
 template<typename Format>
 void
-dither(Image & image, int kernel_size)
+dither(asio::thread_pool & threads, Image & image, int kernel_size)
 {
     struct PixelCoord {
         int x;
@@ -153,45 +157,68 @@ dither(Image & image, int kernel_size)
         bayer_function(coord, lum, pixel);
     };
 
-    // Run pipeline
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
-            // Casting from Format* to VipsPel* to void* to Format* is probably UB
+    // Run pipeline with fork/join pattern
+    int const whole_x_chunks = width / G_THREAD_CHUNK_SIZE;
+    int const whole_y_chunks = height / G_THREAD_CHUNK_SIZE;
+
+    // Process whole chunks
+    for (int y = 0; y < whole_y_chunks; ++y) {
+        for (int x = 0; x < whole_x_chunks; ++x) {
+            asio::post(threads, [&region, x, y, &pipeline] {
+                for (int i = 0; i < G_THREAD_CHUNK_SIZE; ++i) {
+                    for (int j = 0; j < G_THREAD_CHUNK_SIZE; ++j) {
+                        // Casting from Format* to VipsPel* to void* to Format*
+                        // is probably UB
+                        auto const real_x = x * G_THREAD_CHUNK_SIZE + j;
+                        auto const real_y = y * G_THREAD_CHUNK_SIZE + i;
+                        void * data = VIPS_REGION_ADDR(region, real_x, real_y);
+                        pipeline(PixelCoord{real_x, real_y},
+                                 static_cast<Format *>(data));
+                    }
+                }
+            });
+        }
+    }
+
+    // Process remainder
+    for (int y = whole_y_chunks * G_THREAD_CHUNK_SIZE; y < height; ++y) {
+        for (int x = whole_x_chunks * G_THREAD_CHUNK_SIZE; x < width; ++x) {
+            // Casting from Format* to VipsPel* to void* to Format*
+            // is probably UB
             void * data = VIPS_REGION_ADDR(region, x, y);
             pipeline(PixelCoord{x, y}, static_cast<Format *>(data));
         }
     }
+
+    threads.wait();
 }
 
 void
-dither_dispatch(Image & image, int kernel_size)
+dither_dispatch(asio::thread_pool & threads, Image & image, int kernel_size)
 {
-    auto error_func = [] {
+    auto dither_func = [format = image.format()] {
+        switch (format) {
+            case VIPS_FORMAT_UCHAR: return &dither<unsigned char>;
+            case VIPS_FORMAT_USHORT:
+                // NOLINTNEXTLINE(google-runtime-int)
+                return &dither<unsigned short>;
+            case VIPS_FORMAT_SHORT:
+                // NOLINTNEXTLINE(google-runtime-int)
+                return &dither<short>;
+            case VIPS_FORMAT_UINT: return dither<unsigned>;
+            case VIPS_FORMAT_INT: return &dither<int>;
+            case VIPS_FORMAT_FLOAT: return dither<float>;
+            case VIPS_FORMAT_DOUBLE: return &dither<double>;
+            case VIPS_FORMAT_NOTSET:
+            case VIPS_FORMAT_CHAR:
+            case VIPS_FORMAT_COMPLEX:
+            case VIPS_FORMAT_DPCOMPLEX: [[fallthrough]];
+            case VIPS_FORMAT_LAST: break;
+        }
         throw std::runtime_error("Unsupported image format");
-    };
+    }();
 
-    switch (image.format()) {
-        case VIPS_FORMAT_NOTSET: error_func(); break;
-        case VIPS_FORMAT_UCHAR:
-            dither<unsigned char>(image, kernel_size);
-            break;
-        case VIPS_FORMAT_CHAR: error_func(); break;
-        case VIPS_FORMAT_USHORT:
-            // NOLINTNEXTLINE(google-runtime-int)
-            dither<unsigned short>(image, kernel_size);
-            break;
-        case VIPS_FORMAT_SHORT:
-            // NOLINTNEXTLINE(google-runtime-int)
-            dither<short>(image, kernel_size);
-            break;
-        case VIPS_FORMAT_UINT: dither<unsigned>(image, kernel_size); break;
-        case VIPS_FORMAT_INT: dither<int>(image, kernel_size); break;
-        case VIPS_FORMAT_FLOAT: dither<float>(image, kernel_size); break;
-        case VIPS_FORMAT_COMPLEX: error_func(); break;
-        case VIPS_FORMAT_DOUBLE: dither<double>(image, kernel_size); break;
-        case VIPS_FORMAT_DPCOMPLEX:
-        case VIPS_FORMAT_LAST: error_func(); break;
-    }
+    dither_func(threads, image, kernel_size);
 }
 
 void
@@ -247,6 +274,8 @@ main(int argc, char ** argv) -> int
         // Load image
         auto image = Image::new_from_file(in_file.c_str());
 
+        asio::thread_pool threads{std::thread::hardware_concurrency()};
+
         // Reinterpret color space
         // @TODO: Is this correct?
         image.colourspace(VipsInterpretation::VIPS_INTERPRETATION_sRGB);
@@ -255,8 +284,8 @@ main(int argc, char ** argv) -> int
         enhance(image, {brightness, contrast});
 
         // Perform dithering
-        timed_exec("Dither", [&image, kernel_size]() {
-            dither_dispatch(image, kernel_size);
+        timed_exec("Dither", [&threads, &image, kernel_size]() {
+            dither_dispatch(threads, image, kernel_size);
         });
 
         // Write new image
