@@ -1,5 +1,6 @@
 #include "asio.hpp"
 #include "fmt/core.h"
+#include "monotonic_buffer_resource.hh"
 #include "timing.hh"
 
 #include <filesystem>
@@ -175,36 +176,53 @@ dither(asio::thread_pool & threads, Image & image, int kernel_size)
         }
     };
 
+    // Set up an arena allocator for the ASIO job queue
+    // 128 bytes per job probably covers all platforms
+    constexpr size_t        job_size = 128;
+    std::vector<std::byte>  storage(job_size * (whole_x_chunks + 1) *
+                                   (whole_y_chunks + 1));
+    MonotonicBufferResource pool{storage.data(), storage.size()};
+
     // Process chunks
     for (int y = 0; y < whole_y_chunks; ++y) {
         // Main chunks
         auto const real_y = y * G_THREAD_CHUNK_SIZE;
         for (int x = 0; x < whole_x_chunks; ++x) {
             auto const real_x = x * G_THREAD_CHUNK_SIZE;
-            asio::post(threads, [&process_chunk, real_x, real_y] {
-                process_chunk(
-                    {real_x, real_y}, G_THREAD_CHUNK_SIZE, G_THREAD_CHUNK_SIZE);
-            });
+            asio::post(threads,
+                       asio::bind_allocator(
+                           std::pmr::polymorphic_allocator<int>(&pool),
+                           [&process_chunk, real_x, real_y] {
+                               process_chunk({real_x, real_y},
+                                             G_THREAD_CHUNK_SIZE,
+                                             G_THREAD_CHUNK_SIZE);
+                           }));
         }
 
         // Remainder column
-        asio::post(threads,
-                   [&process_chunk, remainder_start_x, real_y, remainder_x] {
-                       process_chunk({remainder_start_x, real_y},
-                                     remainder_x,
-                                     G_THREAD_CHUNK_SIZE);
-                   });
+        asio::post(
+            threads,
+            asio::bind_allocator(
+                std::pmr::polymorphic_allocator<int>(&pool),
+                [&process_chunk, remainder_start_x, real_y, remainder_x] {
+                    process_chunk({remainder_start_x, real_y},
+                                  remainder_x,
+                                  G_THREAD_CHUNK_SIZE);
+                }));
     }
 
     // Remainder row
     for (int x = 0; x < whole_x_chunks; ++x) {
         auto const real_x = x * G_THREAD_CHUNK_SIZE;
-        asio::post(threads,
-                   [&process_chunk, real_x, remainder_start_y, remainder_y] {
-                       process_chunk({real_x, remainder_start_y},
-                                     G_THREAD_CHUNK_SIZE,
-                                     remainder_y);
-                   });
+        asio::post(
+            threads,
+            asio::bind_allocator(
+                std::pmr::polymorphic_allocator<int>(&pool),
+                [&process_chunk, real_x, remainder_start_y, remainder_y] {
+                    process_chunk({real_x, remainder_start_y},
+                                  G_THREAD_CHUNK_SIZE,
+                                  remainder_y);
+                }));
     }
 
     // Remaining corner
